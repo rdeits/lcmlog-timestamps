@@ -8,6 +8,9 @@ def lcmtype_classes(module):
 def fingerprint_map(classes):
     return {c._get_packed_fingerprint(): c for c in classes}
 
+class FingerprintNotFoundException(Exception):
+    pass
+
 class MessageTypeManager(object):
     def __init__(self, lcmtype_module_names):
         self.fingerprint_to_type = {}
@@ -23,7 +26,7 @@ class MessageTypeManager(object):
         try:
             return self.fingerprint_to_type[fingerprint]
         except KeyError:
-            raise ValueError("Could not find fingerprint to match event on channel: {:s}".format(event.channel))
+            raise FingerprintNotFoundException("Could not find fingerprint to match event on channel: {:s}".format(event.channel))
 
     def decode_event(self, event):
         msg_type = self.get_message_type(event)
@@ -35,12 +38,15 @@ def replace_timestamps_with_log_times(manager, input_log, output_log, overwrite=
     if not isinstance(output_log, lcm.EventLog):
         output_log = lcm.EventLog(output_log, "w", overwrite=overwrite)
     for event in input_log:
-        msg = manager.decode_event(event)
-        for field in ["utime", "timestamp"]:
-            if hasattr(msg, field):
-                setattr(msg, field, event.timestamp)
-                break
-        output_log.write_event(event.timestamp, event.channel, msg.encode())
+        try:
+            msg = manager.decode_event(event)
+            for field in ["utime", "timestamp"]:
+                if hasattr(msg, field):
+                    setattr(msg, field, event.timestamp)
+                    break
+            output_log.write_event(event.timestamp, event.channel, msg.encode())
+        except FingerprintNotFoundException:
+            print "Warning: fingerprint not found for message on channel: {:s}".format(event.channel)
 
 if __name__ == '__main__':
     import argparse
@@ -50,6 +56,5 @@ if __name__ == '__main__':
     parser.add_argument('destination', type=str, help="destination log file (will be overwritten if necessary)")
     parser.add_argument('lcmtype_module_names', type=str, nargs='+', help="names of python modules containing lcm type definitions")
     args = parser.parse_args()
-    print args.lcmtype_module_names
     manager = MessageTypeManager(args.lcmtype_module_names)
     replace_timestamps_with_log_times(manager, args.source, args.destination, overwrite=True)
